@@ -4,17 +4,39 @@ ini_set('display_errors', '1');
 ini_set('display_startup_errors', '1');
 error_reporting(E_ALL);
 
+// Автозавантаження класів
 spl_autoload_register(function(string $class){
+    // Перетворює namespace (наприклад, src\Core\Container) у шлях файлу
     $path = __DIR__ . '/../' . str_replace('\\', '/', $class) . '.php';
     if (file_exists($path)) require $path;
 });
 
+// Імпортуємо класи
+use src\Core\Container;
 use src\Infra\SqliteTaskRepository;
 use src\App\TaskService;
+use src\Ports\TaskRepository;
 use src\Domain\TaskStatus;
 
-$repo = new SqliteTaskRepository(__DIR__ . '/../data/app.sqlite');
-$service = new TaskService($repo);
+// 1. Ініціалізація Контейнера
+$container = new Container();
+
+// 2. Налаштування залежностей (Wiring)
+
+// Коли просимо інтерфейс TaskRepository -> повертаємо SqliteTaskRepository
+$container->set(TaskRepository::class, function() {
+    return new SqliteTaskRepository(__DIR__ . '/../data/app.sqlite');
+});
+
+// Коли просимо TaskService -> створюємо його, беручи репозиторій з контейнера
+$container->set(TaskService::class, function(Container $c) {
+    return new TaskService($c->get(TaskRepository::class));
+});
+
+// 3. Запуск застосунку
+
+// Отримуємо готовий сервіс із контейнера
+$service = $container->get(TaskService::class);
 
 $path = parse_url($_SERVER['REQUEST_URI'], PHP_URL_PATH) ?? '/';
 $method = $_SERVER['REQUEST_METHOD'] ?? 'GET';
@@ -25,6 +47,7 @@ function redirect(string $to = '/'): void {
 }
 
 try {
+    // Обробка POST запитів
     if ($method === 'POST' && $path === '/add') {
         $service->create(
             trim($_POST['title'] ?? ''),
@@ -48,12 +71,13 @@ try {
         redirect('/');
     }
 
-    // GET /
+    // GET / - Отримання списку задач
     $tasks = $service->all();
     $error = null;
 
 } catch (Throwable $e) {
-    $tasks = $service->all();
+    // Якщо сталася помилка (наприклад, БД заблокована або валідація не пройшла)
+    $tasks = $service->all(); // Пробуємо все одно показати задачі
     $error = $e->getMessage();
 }
 
@@ -62,14 +86,14 @@ try {
 <html lang="uk">
 <head>
   <meta charset="utf-8">
-  <title>Task Manager (DIP)</title>
+  <title>Task Manager (DI Container)</title>
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
 <main class="container">
   <header class="header">
     <h1>Task Manager</h1>
-    <p class="muted">DIP demo: Service → Interface → Repository(SQLite)</p>
+    <p class="muted">DIP demo: Container → Service → Interface → Repository</p>
   </header>
 
   <?php if (!empty($error)): ?>
